@@ -59,6 +59,7 @@ import android.telephony.CellInfoWcdma;
 import android.os.Handler;
 import android.telephony.TelephonyManager;
 import android.util.FloatMath;
+import android.util.Log;
 import android.widget.Toast;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
@@ -89,7 +90,8 @@ public class SensorService extends Service implements SensorEventListener,
     private volatile String lastBLEBluetoothInfos = ";";
     private volatile String lastMotions = ";";
     private volatile String BatteryLevel = "";
-    private volatile float lastAudios = -1;
+    private volatile float totAudios = 0;
+    private volatile float sumAudios = 0;
     private GoogleApiClient mGoogleApiClient;
     public LocationListener locationListener;
     private volatile long lastUpdate = 0;
@@ -104,10 +106,12 @@ public class SensorService extends Service implements SensorEventListener,
     private Sensor mLightSensor;
     private Sensor mLinearAccelerationSensor;
     private volatile long lastAccelTime = 0;
+    private volatile long lastAudioTime = 0;
     private volatile Sensor mStepCounterSensor;
     private volatile float lastProximity = -1;
     private volatile float lastLight = -1;
     private volatile float lastAccel = -1;
+    private volatile long firstStepCounter = -1;
     private volatile float lastAccelTot = 0;
     private volatile float lastAccelAvg = 0;
     private volatile boolean isBluetoothScan = false;
@@ -132,6 +136,8 @@ public class SensorService extends Service implements SensorEventListener,
     BluetoothAdapter bluetoothAdapter;
     TelephonyManager teleMan;
     Thread mainSave;
+    private volatile boolean isGPSactivated = false;
+    private volatile Settings settings;
 
     // ###################
     // ###    Init    ###
@@ -142,6 +148,7 @@ public class SensorService extends Service implements SensorEventListener,
         super.onCreate();
         thisContext = getBaseContext();
         BDD = new Hashtable();
+        settings = new Settings();
 
         // ***
         teleMan = (TelephonyManager)getSystemService(Context.TELEPHONY_SERVICE); // Mobile network
@@ -183,9 +190,35 @@ public class SensorService extends Service implements SensorEventListener,
         mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
         mStepCounterSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
 
+        if(!bluetoothAdapter.isEnabled()) {
+            bluetoothAdapter.enable();
+        }
+
+        if(!mainWifi.isWifiEnabled()) {
+            mainWifi.setWifiEnabled(true);
+        }
+
         // Get the Wake Lock
         PowerManager pm = (PowerManager)getSystemService(Context.POWER_SERVICE);
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wlTag");
+    }
+
+    public void goGPS() {
+        try {
+            locationManager.removeUpdates(locationListener);
+        }
+        catch (Exception e) {}
+        try {
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, settings.getInt("GPS_INTERVAL") * 1000, 0, locationListener);
+                isGPSactivated = true;
+            } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, settings.getInt("GPS_INTERVAL") * 1000, 0, locationListener);
+                isGPSactivated = true;
+            } else {
+                isGPSactivated = false;
+            }
+        } catch (Exception e) {}
     }
 
     // ###################
@@ -199,22 +232,40 @@ public class SensorService extends Service implements SensorEventListener,
             wl.acquire();
 
             // ***
-            mSensorManager.registerListener(this, this.mLinearAccelerationSensor, 1000000); //SensorManager.SENSOR_DELAY_NORMAL);
+            mSensorManager.registerListener(this, this.mLinearAccelerationSensor, SensorManager.SENSOR_DELAY_NORMAL);
             mSensorManager.registerListener(this, this.mProximitySensor, SensorManager.SENSOR_DELAY_NORMAL);
             mSensorManager.registerListener(this, this.mLightSensor, SensorManager.SENSOR_DELAY_NORMAL);
-            mSensorManager.registerListener(this, this.mStepCounterSensor, 1000000); //SensorManager.SENSOR_DELAY_NORMAL);
-            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 60000, 0, locationListener);
+            mSensorManager.registerListener(this, this.mStepCounterSensor, SensorManager.SENSOR_DELAY_NORMAL);
+            registerReceiver(BluetoothReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
+            registerReceiver(BluetoothReceiver, new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED));
+            goGPS();
+
+            // Activity manager
             mActivityRecognitionScan.startActivityRecognitionScan();
             updateReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     lastMotions = intent.getExtras().getString("activity");
+
+                    /*
+                    Example: adaptive sampling rate on the smartphone based on current activity
+                    String[] parts = lastMotions.split(";");
+                    if(parts[0].equals("3")) { // Still
+                        settings.setInt(..., ...);
+                    }
+                    else { // Rest - Walking, tilting, etc.
+                        settings.setInt(..., ...);
+                    }
+                    */
+
+                    // GPS?
+                    if(!isGPSactivated) {
+                        goGPS();
+                    }
                 }
             };
             IntentFilter updateIntentFilter = new IntentFilter("updatedActivity");
             registerReceiver(updateReceiver, updateIntentFilter);
-            registerReceiver(BluetoothReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
-            registerReceiver(BluetoothReceiver, new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED));
 
             // ###################
             // ### Main thread ###
@@ -226,7 +277,7 @@ public class SensorService extends Service implements SensorEventListener,
                         long currentTime = System.currentTimeMillis() / 1000;
 
                         // Mobile network
-                        if(currentTime >= lastMobileInfosUpdate + 300) {
+                        if(currentTime >= lastMobileInfosUpdate + settings.getInt("CE_INTERVAL")) {
                             lastMobileInfosUpdate = currentTime;
                             try {
                                 String asuLevel = "";
@@ -250,7 +301,7 @@ public class SensorService extends Service implements SensorEventListener,
                         }
 
                         // Wifi
-                        if(currentTime >= lastWifiUpdate + 300) {
+                        if(currentTime >= lastWifiUpdate + settings.getInt("WI_INTERVAL")) {
                             lastWifiUpdate = currentTime;
                             try {
                                 registerReceiver(receiverWifi, new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
@@ -260,7 +311,7 @@ public class SensorService extends Service implements SensorEventListener,
                         }
 
                         // Bluetooth
-                        if(!isBluetoothScan && currentTime >= lastBluetoothUpdate + 120) {
+                        if(!isBluetoothScan && currentTime >= lastBluetoothUpdate + settings.getInt("BL_INTERVAL")) {
                             try {
                                 //registerReceiver(BluetoothReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
                                 bluetoothAdapter.startDiscovery();
@@ -271,55 +322,82 @@ public class SensorService extends Service implements SensorEventListener,
                         }
 
                         // Battery
-                        if(currentTime >= lastBatteryUpdate + 60) {
+                        if(currentTime >= lastBatteryUpdate + settings.getInt("B_INTERVAL")) {
                             lastBatteryUpdate = currentTime;
                             registerReceiver(mBatInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
                         }
 
                         // Sensors
-                        if(currentTime >= lastSensorUpdate + 1) {
+                        if(currentTime > lastSensorUpdate) {
                             lastSensorUpdate = currentTime;
 
-                            // Timer / Accelerometer
-                            boolean lastAccelRec = false;
-                            if(lastAccel > -1 && currentTime - lastAccelTime >= 30)  {
+                            // Acceleration
+                            boolean recordAcceleration = false;
+                            if(lastAccel > -1 && currentTime - lastAccelTime >= settings.getInt("A_INTERVAL"))  {
                                 lastAccelTime = currentTime;
-                                lastAccelRec = true;
+                                recordAcceleration = true;
+                            }
+
+                            // Steps
+                            boolean recordStepCounter = false;
+                            if(stepCounterDiff > 0 && currentTime - firstStepCounter >= settings.getInt("SC_INTERVAL")) {
+                                firstStepCounter = -1;
+                                recordStepCounter = true;
+                            }
+
+                            // Audio
+                            boolean recordAudio = false;
+                            if(totAudios > 0 && currentTime - lastAudioTime >= settings.getInt("AU_INTERVAL")) {
+                                lastAudioTime = currentTime;
+                                recordAudio = true;
                             }
 
                             // All sensors
-                            lastSPSensorData = (maxProximity > -1 ? String.valueOf(maxProximity) : "") + ";" + (maxLight > -1 ? String.valueOf(maxLight) : "") + ";" + (lastAccelRec ? String.valueOf((float) Math.round(lastAccel*10)/10.0) : "") + ";" + (lastAccelRec && lastAccelTot > 0 ? ((float) Math.round((lastAccelAvg/lastAccelTot)*10)/10.0):"") + ";" + (stepCounterDiff > 0 ? stepCounterDiff:"");
-                            stepCounterPre = stepCounter;
-                            stepCounterDiff = 0;
+                            lastSPSensorData = (maxProximity > -1 ? String.valueOf(maxProximity) : "") + ";" + (maxLight > -1 ? String.valueOf(maxLight) : "") + ";" + (recordAcceleration ? String.valueOf((float) Math.round(lastAccel*10)/10.0) : "") + ";" + (recordAcceleration && lastAccelTot > 0 ? ((float) Math.round((lastAccelAvg/lastAccelTot)*10)/10.0):"") + ";" + (recordStepCounter ? stepCounterDiff:"");
 
-                            // ***
-                            List<String> tmp = new ArrayList<String>();
-                            tmp.add(BatteryLevel);
-                            BatteryLevel = "";
-                            tmp.add(lastSPSensorData);
-                            lastSPSensorData = ";;;;";
-                            maxProximity = -1;
-                            maxLight = -1;
-                            if(lastAccelRec) {
-                                lastAccel = -1;
-                                lastAccelTot = 0;
-                                lastAccelAvg = 0;
+                            // Is there something to record?
+                            if(!lastSPSensorData.equals(";;;;") || !BatteryLevel.equals("") || !lastMobileInfos.equals(";;;;;")
+                                    || !lastWifiInfos.equals(";") || !lastBluetoothInfos.equals(";") || !lastBLEBluetoothInfos.equals(";")
+                                    || !lastPositions.equals(";;;") || !lastMotions.equals(";") || recordAudio) {
+
+                                // ***
+                                List<String> tmp = new ArrayList<String>();
+                                tmp.add(BatteryLevel);
+                                BatteryLevel = "";
+                                tmp.add(lastSPSensorData);
+                                lastSPSensorData = ";;;;";
+                                maxProximity = -1;
+                                maxLight = -1;
+                                if(recordAcceleration) {
+                                    lastAccel = -1;
+                                    lastAccelTot = 0;
+                                    lastAccelAvg = 0;
+                                }
+                                if(recordStepCounter) {
+                                    stepCounterPre = stepCounter;
+                                    stepCounterDiff = 0;
+                                }
+                                tmp.add(recordAudio ? String.valueOf(sumAudios/totAudios) : "");
+                                if(recordAudio) {
+                                    totAudios = 0;
+                                    sumAudios = 0;
+                                }
+                                tmp.add(lastMotions);
+                                lastMotions = ";";
+                                tmp.add(lastMobileInfos);
+                                lastMobileInfos = ";;;;;";
+                                tmp.add(lastWifiInfos);
+                                lastWifiInfos = ";";
+                                tmp.add(lastBluetoothInfos);
+                                lastBluetoothInfos = ";";
+                                tmp.add(lastBLEBluetoothInfos);
+                                lastBLEBluetoothInfos = ";";
+                                tmp.add(lastPositions);
+                                lastPositions = ";;;";
+
+                                // ***
+                                BDD.put((int) currentTime, tmp);
                             }
-                            tmp.add((lastAudios > -1 ? String.valueOf(lastAudios) : ""));
-                            lastAudios = -1;
-                            tmp.add(lastMotions);
-                            tmp.add(lastMobileInfos);
-                            lastMobileInfos = ";;;;;";
-                            tmp.add(lastWifiInfos);
-                            lastWifiInfos = ";";
-                            tmp.add(lastBluetoothInfos);
-                            lastBluetoothInfos = ";";
-                            tmp.add(lastBLEBluetoothInfos);
-                            lastBLEBluetoothInfos = ";";
-                            tmp.add(lastPositions);
-
-                            // ***
-                            BDD.put((int) currentTime, tmp);
                         }
 
                         curTime = System.currentTimeMillis() / 1000;
@@ -397,8 +475,9 @@ public class SensorService extends Service implements SensorEventListener,
         while(microRunning)
         {
             float maxampl = recorder.getMaxAmplitude();
-            if(maxampl > lastAudios)
-                lastAudios = maxampl;
+
+            totAudios++;
+            sumAudios += maxampl;
 
             try {
                 Thread.sleep(1000);
@@ -520,7 +599,11 @@ public class SensorService extends Service implements SensorEventListener,
             }
         }
         else if (mySensor.getType() == Sensor.TYPE_STEP_COUNTER) { // Step counter
-            stepCounter = sensorEvent.values[0];
+            long currentTime = System.currentTimeMillis() / 1000;
+
+            stepCounter = (int) sensorEvent.values[0];
+            if(firstStepCounter == -1)
+                firstStepCounter = currentTime;
             if(stepCounterPre == -1)
                 stepCounterPre = stepCounter;
             stepCounterDiff = stepCounter - stepCounterPre;
@@ -532,7 +615,6 @@ public class SensorService extends Service implements SensorEventListener,
 
     public void Maj() {
         lastUpdate = curTime;
-
         try {
             File file = new File(getFilesDir() + "/main_sp"); // new File(Environment.getExternalStorageDirectory(), "test"); ?
             if(!file.exists()) {
@@ -647,8 +729,7 @@ public class SensorService extends Service implements SensorEventListener,
                     totNbBluetooth++;
                 }
             }
-            else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action))
-            {
+            else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
                 isBluetoothScan = false;
                 lastBluetoothInfos = totBluetooth + ";" + String.valueOf(totNbBluetooth);
                 totBluetooth = "";

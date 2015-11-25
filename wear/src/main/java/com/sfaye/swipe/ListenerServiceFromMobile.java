@@ -47,8 +47,6 @@ public class ListenerServiceFromMobile extends WearableListenerService {
 
     private static final String START_WEAR = "/start-wear";
     private static final String STOP_WEAR = "/stop-wear";
-    private static final String START_WEAR_LIVE = "/start-wear-live";
-    private static final String STOP_WEAR_LIVE = "/stop-wear-live";
     private Intent intent = null;
     private Context gContext = null;
 
@@ -61,20 +59,15 @@ public class ListenerServiceFromMobile extends WearableListenerService {
         startIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
         startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
-        intent = null;
-        if (messageEvent.getPath().equals(START_WEAR_LIVE) || messageEvent.getPath().equals(STOP_WEAR_LIVE))
-            intent = new Intent(gContext, SensorServiceLive.class);
-        else
-            intent = new Intent(gContext, SensorService.class);
+        intent = new Intent(gContext, SensorService.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
-        // Receive the message from mobile
-        if (messageEvent.getPath().equals(START_WEAR) || messageEvent.getPath().equals(START_WEAR_LIVE)) {
+        if (messageEvent.getPath().equals(START_WEAR)) {
             if(!isServiceRunning(gContext)) {
                 gContext.startService(intent);
             }
         }
-        else if (messageEvent.getPath().equals(STOP_WEAR) || messageEvent.getPath().equals(STOP_WEAR_LIVE)) {
+        else if (messageEvent.getPath().equals(STOP_WEAR)) {
             if(isServiceRunning(gContext)) {
                 gContext.stopService(intent);
             }
@@ -90,7 +83,7 @@ public class ListenerServiceFromMobile extends WearableListenerService {
         final ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
         final List<ActivityManager.RunningServiceInfo> services = activityManager.getRunningServices(Integer.MAX_VALUE);
         for (ActivityManager.RunningServiceInfo runningServiceInfo : services) {
-            if (runningServiceInfo.service.getClassName().equals(SensorService.class.getName()) || runningServiceInfo.service.getClassName().equals(SensorServiceLive.class.getName())){
+            if (runningServiceInfo.service.getClassName().equals(SensorService.class.getName())){
                 return true;
             }
         }

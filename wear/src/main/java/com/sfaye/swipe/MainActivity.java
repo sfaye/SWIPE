@@ -42,7 +42,7 @@ import android.widget.TextView;
 import java.util.List;
 
 /*
-    Main activity of the smartwatch application. It manages the link with SensorService (get data from the sensors of the smartwatch) or SensorServiceLive (the same but with different frequencies)
+    Main activity of the smartwatch application. It manages the link with SensorService (get data from the sensors of the smartwatch).
 */
 public class MainActivity extends Activity {
     private TextView info;
@@ -84,22 +84,11 @@ public class MainActivity extends Activity {
         setText();
     }
 
-    public static boolean isLiveService(Context context){
-        final ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        final List<ActivityManager.RunningServiceInfo> services = activityManager.getRunningServices(Integer.MAX_VALUE);
-        for (ActivityManager.RunningServiceInfo runningServiceInfo : services) {
-            if (runningServiceInfo.service.getClassName().equals(SensorServiceLive.class.getName())){
-                return true;
-            }
-        }
-        return false;
-    }
-
     public static boolean isServiceRunning(Context context){
         final ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
         final List<ActivityManager.RunningServiceInfo> services = activityManager.getRunningServices(Integer.MAX_VALUE);
         for (ActivityManager.RunningServiceInfo runningServiceInfo : services) {
-            if (runningServiceInfo.service.getClassName().equals(SensorService.class.getName()) || runningServiceInfo.service.getClassName().equals(SensorServiceLive.class.getName())){
+            if (runningServiceInfo.service.getClassName().equals(SensorService.class.getName())){
                 return true;
             }
         }
@@ -110,10 +99,7 @@ public class MainActivity extends Activity {
         Tap = isServiceRunning(gContext);
         if(Tap) {
             info.setText("Service started");
-            if(isLiveService(gContext))
-                buttonStop.setVisibility(View.INVISIBLE);
-            else
-                buttonStop.setVisibility(View.VISIBLE);
+            buttonStop.setVisibility(View.VISIBLE);
         }
         else {
             info.setText("Service stopped");

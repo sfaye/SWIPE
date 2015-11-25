@@ -44,24 +44,27 @@ import com.google.android.gms.location.ActivityRecognitionClient;
         https://developers.google.com/android/reference/com/google/android/gms/location/ActivityRecognition
  */
 public class ActivityRecognitionScan implements GooglePlayServicesClient.ConnectionCallbacks, GooglePlayServicesClient.OnConnectionFailedListener {
+
+    private volatile Settings settings;
     private Context context;
     private static ActivityRecognitionClient mActivityRecognitionClient;
     private static PendingIntent callbackIntent;
 
     public ActivityRecognitionScan(Context context) {
         this.context=context;
+        settings = new Settings();
     }
 
-    public void startActivityRecognitionScan(){
+    public void startActivityRecognitionScan() {
         mActivityRecognitionClient = new ActivityRecognitionClient(context, this, this);
         mActivityRecognitionClient.connect();
     }
 
-    public void stopActivityRecognitionScan(){
+    public void stopActivityRecognitionScan() {
         try{
             mActivityRecognitionClient.removeActivityUpdates(callbackIntent);
         }
-        catch (IllegalStateException e){
+        catch (IllegalStateException e) {
            //
         }
     }
@@ -75,10 +78,11 @@ public class ActivityRecognitionScan implements GooglePlayServicesClient.Connect
     public void onConnected(Bundle connectionHint) {
         Intent intent = new Intent(context, com.sfaye.swipe.ActivityRecognitionService.class);
         callbackIntent = PendingIntent.getService(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
-        mActivityRecognitionClient.requestActivityUpdates(0, callbackIntent); // 0 = as fast as possible
+        mActivityRecognitionClient.requestActivityUpdates(settings.getInt("AR_INTERVAL") * 1000, callbackIntent);
     }
 
     @Override
     public void onDisconnected() {
+        //
     }
 }

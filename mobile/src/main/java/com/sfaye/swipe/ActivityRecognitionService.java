@@ -38,7 +38,7 @@ import android.content.Intent;
 import java.util.List;
 
 /*
-    Get last recognized activity
+    Get last the recognized activity
     About Android Activity Recognition:
         http://opensignal.com/blog/2013/05/16/getting-started-with-activity-recognition-android-developer-guide/
         https://developers.google.com/android/reference/com/google/android/gms/location/ActivityRecognition
@@ -88,7 +88,7 @@ public class ActivityRecognitionService extends IntentService{
         return myActivity;
     }
 
-    private static String getFriendlyName(int detected_activity_type){
+    private static String getFriendlyName(int detected_activity_type) {
         switch (detected_activity_type ) {
             case DetectedActivity.IN_VEHICLE: // 0
                 return "in vehicle";

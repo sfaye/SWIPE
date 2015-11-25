@@ -36,10 +36,6 @@
             <intent-filter><action android:name="com.sfaye.swipe.SensorService"></action>
             </intent-filter>
         </service>
-        <service android:name="com.sfaye.swipe.SensorServiceLive" android:noHistory="true">
-            <intent-filter><action android:name="com.sfaye.swipe.SensorServiceLive"></action>
-            </intent-filter>
-        </service>
         <service android:name="com.sfaye.swipe.ListenerServiceFromMobile">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.BIND_LISTENER" />

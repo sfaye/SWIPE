@@ -20,6 +20,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-sdk
         android:minSdkVersion="19"
@@ -48,10 +49,13 @@
             <intent-filter><action android:name="com.sfaye.swipe.SensorService"></action>
             </intent-filter>
         </service>
-        <service android:name="com.sfaye.swipe.SensorServiceLive" android:noHistory="true">
-            <intent-filter><action android:name="com.sfaye.swipe.SensorServiceLive"></action>
+        <receiver
+            android:name="com.sfaye.swipe.StartMyServiceAtBootReceiver"
+            android:label="StartMyServiceAtBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
-        </service>
+        </receiver>
     </application>
 
 </manifest>

@@ -65,14 +65,6 @@
         android:layout_alignTop="@+id/buttonStart"
         android:layout_centerHorizontal="true" />
 
-    <Switch
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Live mode"
-        android:id="@+id/liveMode"
-        android:layout_above="@+id/info"
-        android:layout_alignEnd="@+id/info" />
-
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -92,9 +84,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:id="@+id/progressBarWhenStarted"
-        android:layout_below="@+id/liveMode"
-        android:layout_toEndOf="@+id/buttonStart"
-        android:indeterminate="true" />
+        android:layout_alignTop="@+id/gridLayout"
+        android:layout_alignEnd="@+id/gridLayout" />
 
 
 </RelativeLayout>

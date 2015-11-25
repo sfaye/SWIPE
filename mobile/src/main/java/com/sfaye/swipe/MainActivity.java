@@ -34,6 +34,7 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.PowerManager;
 import android.view.LayoutInflater;
@@ -81,24 +82,14 @@ import java.util.Iterator;
 import java.util.Set;
 
 /*
-    Main activity of the smartphone application. It shows the different options to launch the data collection and manages the link with:
+    Main activity of the smartphone application. It shows different options to launch the data collection and manages the link with:
         * the smartwatch (get data from the smartwatch)
-        * SensorService (get data from the sensors of the smartphone) or SensorServiceLive (the same but with different frequencies)
+        * SensorService (get data from the sensors of the smartphone)
         * the web service (send all the data to record it on a web server)
 */
 public class MainActivity extends Activity implements MessageApi.MessageListener,
         GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
 
-    /*
-        Parameters
-    */
-    public final String liveServiceUrl = "http://server/service_live_wear_post.php"; // Live web service - wear
-    public final String normalServiceUrl = "http://server/service_upload.php";  // Normal web service - mobile and wear
-
-
-    /*
-        ############################################
-    */
     Node mNode;
     private TextView info;
     private TextView infoProfile;
@@ -108,7 +99,6 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
     private Button buttonStop;
     private ProgressBar sendServiceProgressBar;
     private ProgressBar progressBarWhenStarted;
-    private Switch liveMode;
     private volatile Hashtable<Integer, List<String>> BDDwearable;
     private volatile long curTime = 0;
     private volatile String lastSensorData = null;
@@ -116,19 +106,18 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
     private GoogleApiClient mGoogleApiClient;
     private static final String START_WEAR = "/start-wear";
     private static final String STOP_WEAR = "/stop-wear";
-    private static final String START_WEAR_LIVE = "/start-wear-live";
-    private static final String STOP_WEAR_LIVE = "/stop-wear-live";
     private PowerManager.WakeLock wl;
     public volatile boolean isStarted = false;
     public volatile String currentProfile;
     public volatile long lastStartStop = 0;
-    public volatile boolean isLiveMode = false;
     private Intent intent = null;
     private Context gContext = null;
     private volatile Thread verifIsConnected;
     private volatile boolean verifIsConnectedThread;
     private volatile int lastBattery = -1;
     private volatile long lastMessageFromWear = 0;
+    private volatile Settings settings;
+    private volatile boolean isWatchVisible = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -136,6 +125,9 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        settings = new Settings();
+        gContext = getApplicationContext();
+        thisContext = getBaseContext();
 
         currentProfile = "TEST";
         try {
@@ -151,6 +143,10 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
         }
         catch (IOException e) {}
 
+        if(currentProfile.equals("TEST") && isServiceRunning(gContext) == 0) {
+            Toast.makeText(thisContext, "First launch: please set your profile name.", Toast.LENGTH_SHORT).show();
+        }
+
         verifIsConnectedThread = true;
         verifIsConnected = new Thread(new Runnable() {
             public void run() {
@@ -160,20 +156,21 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                         Wearable.NodeApi.getConnectedNodes(mGoogleApiClient).setResultCallback(new ResultCallback<NodeApi.GetConnectedNodesResult>() {
                             @Override
                             public void onResult(NodeApi.GetConnectedNodesResult nodes) {
-                                boolean isVisible = false;
+                                isWatchVisible = false;
                                 for (Node node : nodes.getNodes()) {
-                                    isVisible = true;
+                                    isWatchVisible = true;
                                     break;
                                 }
 
-                                if (isVisible) {
+                                if (isWatchVisible) {
                                     runOnUiThread(new Runnable() {
                                         @Override
                                         public void run() {
                                             notConnected.setVisibility(View.INVISIBLE);
                                         }
                                     });
-                                } else {
+                                }
+                                else {
                                     runOnUiThread(new Runnable() {
                                         @Override
                                         public void run() {
@@ -186,26 +183,26 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                     }
 
                     // Stop if wear not there / no battery
-                    if(isStarted && lastBattery > 0 && lastBattery < 5 && (System.currentTimeMillis() / 1000) - 60 > lastStartStop && (System.currentTimeMillis() / 1000) - 4*60 > lastMessageFromWear) {
+                    if(isStarted && lastBattery > 0 && lastBattery < settings.getInt("MIN_BATTERY") && (System.currentTimeMillis() / 1000) - 60 > lastStartStop && (System.currentTimeMillis() / 1000) - 4*60 > lastMessageFromWear) {
                         startStopWear(true);
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
                                 new AlertDialog.Builder(MainActivity.this)
-                                        .setTitle("Smartwatch alert")
-                                        .setMessage("No more battery! Your session was recorded and stopped.")
-                                        .setPositiveButton("OK", new DialogInterface.OnClickListener() {
-                                            public void onClick(DialogInterface dialog, int which) {}
-                                        })
-                                        .setIcon(android.R.drawable.ic_dialog_alert)
-                                        .show();
+                                    .setTitle("Smartwatch alert")
+                                    .setMessage("No more battery! Your session was recorded and stopped.")
+                                    .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                                        public void onClick(DialogInterface dialog, int which) {}
+                                    })
+                                    .setIcon(android.R.drawable.ic_dialog_alert)
+                                    .show();
                             }
                         });
                     }
 
                     // Stop if message and if hour too late
                     int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-                    if(isStarted && (hour >= 0 && hour <= 5) && (System.currentTimeMillis() / 1000) - 60 > lastStartStop  && (System.currentTimeMillis() / 1000) - 60 < lastMessageFromWear) {
+                    if(isStarted && (settings.getInt("NIGHT_STOP") == 1 && (hour >= 0 && hour <= 5)) && (System.currentTimeMillis() / 1000) - 60 > lastStartStop  && (System.currentTimeMillis() / 1000) - 60 < lastMessageFromWear) {
                         startStopWear(true);
                     }
 
@@ -224,36 +221,20 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
 
         initialTimestamp = System.currentTimeMillis() / 1000;
 
-        gContext = getApplicationContext();
-
         mGoogleApiClient = new GoogleApiClient.Builder(this)
-                .addApi(Wearable.API)
-                .addConnectionCallbacks(this)
-                .addOnConnectionFailedListener(this)
-                .build();
+            .addApi(Wearable.API)
+            .addConnectionCallbacks(this)
+            .addOnConnectionFailedListener(this)
+            .build();
 
         mGoogleApiClient.connect();
-
-        thisContext = getBaseContext();
 
         infoProfile = (TextView) findViewById(R.id.currentProfile);
         infoProfile.setText("Current profile: " + currentProfile);
         info = (TextView) findViewById(R.id.info);
         notConnected = (TextView) findViewById(R.id.notConnected);
-        liveMode = (Switch) findViewById(R.id.liveMode);
 
         BDDwearable = new Hashtable();
-
-        if(isServiceRunning(gContext) == 2) {
-            isLiveMode = true;
-            liveMode.setChecked(true);
-        }
-
-        liveMode.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                isLiveMode = isChecked;
-            }
-        });
 
         buttonStart = (Button) findViewById(R.id.buttonStart);
         buttonStart.setOnClickListener(new Button.OnClickListener() {
@@ -273,19 +254,74 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
         if(isServiceRunning(gContext) > 0) {
             isStarted = true;
             buttonStart.setVisibility(View.INVISIBLE);
-            liveMode.setVisibility(View.INVISIBLE);
             buttonStop.setVisibility(View.VISIBLE);
             info.setVisibility(View.VISIBLE);
             notConnected.setVisibility(View.INVISIBLE);
             progressBarWhenStarted.setVisibility(View.VISIBLE);
         }
         else {
+            // Activates GPS
+            LocationManager locationManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
+            boolean gps_enabled = false;
+            boolean network_enabled = false;
+            try{
+                gps_enabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+            }catch(Exception ex){}
+            try{
+                network_enabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            }catch(Exception ex){}
+
+            if(!gps_enabled && !network_enabled){
+                AlertDialog.Builder dialog = new AlertDialog.Builder(this);
+                dialog.setMessage("You need to activate GPS ressources" );
+                dialog.setPositiveButton("Setting", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface paramDialogInterface, int paramInt) {
+                        // TODO Auto-generated method stub
+                        startActivityForResult(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS), 100);
+                    }
+                });
+                dialog.show();
+            }
+
+            // Launch service if a profile is defined and if it is in the settings
+            boolean isRunningCreate = false;
+            if(settings.getInt("AUTO_START_SERVICE") == 1 && isWatchVisible && !currentProfile.equals("TEST") && isServiceRunning(gContext) == 0) {
+                Toast.makeText(thisContext, "Please wait 5 seconds and go back to home screen", Toast.LENGTH_SHORT).show();
+
+                new Thread(new Runnable() {
+                    public void run() {
+                        try {
+                            Thread.sleep(5000);
+                        }
+                        catch(Exception e) {}
+
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                startStopWear(false);
+                            }
+                        });
+
+                    }
+                }).start();
+                isRunningCreate = true;
+            }
+
             isStarted = false;
-            liveMode.setVisibility(View.VISIBLE);
-            buttonStart.setVisibility(View.VISIBLE);
-            buttonStop.setVisibility(View.INVISIBLE);
-            info.setVisibility(View.INVISIBLE);
-            notConnected.setVisibility(View.INVISIBLE);
+            if(isRunningCreate) {
+                buttonStart.setVisibility(View.INVISIBLE);
+                buttonStop.setVisibility(View.INVISIBLE);
+                info.setVisibility(View.INVISIBLE);
+                sendServiceProgressBar.setVisibility(View.VISIBLE);
+                progressBarWhenStarted.setVisibility(View.INVISIBLE);
+            }
+            else {
+                buttonStart.setVisibility(View.VISIBLE);
+                buttonStop.setVisibility(View.INVISIBLE);
+                info.setVisibility(View.INVISIBLE);
+                notConnected.setVisibility(View.INVISIBLE);
+            }
         }
 
         if(!verifIsConnected.isAlive())
@@ -293,9 +329,7 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
 
         // Get the Wake Lock
         PowerManager pm = (PowerManager)getSystemService(Context.POWER_SERVICE);
-        wl = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "wlTag");
+        wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wlTag");
         wl.acquire();
     }
 
@@ -306,13 +340,10 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
         lastStartStop = System.currentTimeMillis() / 1000;
 
         intent = null;
-        if(isLiveMode)
-            intent = new Intent(gContext, SensorServiceLive.class);
-        else
-            intent = new Intent(gContext, SensorService.class);
+        intent = new Intent(gContext, SensorService.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
-        String wearPath = (isStarted ? (isLiveMode ? STOP_WEAR_LIVE : STOP_WEAR) : (isLiveMode ? START_WEAR_LIVE : START_WEAR));
+        String wearPath = (isStarted ? STOP_WEAR : START_WEAR);
 
         if (mNode != null && mGoogleApiClient!=null && mGoogleApiClient.isConnected()) {
             Wearable.MessageApi.sendMessage(
@@ -335,9 +366,9 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                                     }
                                     buttonStart.setVisibility(View.INVISIBLE);
                                     buttonStop.setVisibility(View.VISIBLE);
-                                    liveMode.setVisibility(View.INVISIBLE);
                                     info.setVisibility(View.VISIBLE);
                                     progressBarWhenStarted.setVisibility(View.VISIBLE);
+                                    sendServiceProgressBar.setVisibility(View.INVISIBLE);
                                     initialTimestamp = System.currentTimeMillis() / 1000;
                                 }
                                 else { // Stop the service
@@ -349,75 +380,58 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                                     sendServiceProgressBar.setVisibility(View.VISIBLE);
                                     buttonStart.setVisibility(View.INVISIBLE);
                                     buttonStop.setVisibility(View.INVISIBLE);
-                                    liveMode.setVisibility(View.INVISIBLE);
                                     info.setVisibility(View.INVISIBLE);
                                     progressBarWhenStarted.setVisibility(View.INVISIBLE);
 
-                                    if(!isLiveMode) {
-                                        // Send data to the service
-                                        Runnable serviceSendCall = new Runnable() {
-                                            public void run() {
-                                                if(serviceUpload("main_sgl") && serviceUpload("main_sp")) {
-                                                    // End loading
-                                                }
-                                                else {
-                                                    runOnUiThread(new Runnable() {
-                                                        @Override
-                                                        public void run() {
-                                                            new AlertDialog.Builder(MainActivity.this)
-                                                                    .setTitle("Unable to send data")
-                                                                    .setMessage("SWIPE is not able to send your data through WiFi or Cellular network. However, as it is recorded, you can send it later. Do not restart a new session in the meantime.")
-                                                                    .setPositiveButton("OK", new DialogInterface.OnClickListener() {
-                                                                        public void onClick(DialogInterface dialog, int which) {}
-                                                                    })
-                                                                    .setIcon(android.R.drawable.ic_dialog_alert)
-                                                                    .show();
-                                                        }
-                                                    });
-
-                                                    /*runOnUiThread(new Runnable() {
-                                                        @Override
-                                                        public void run() {
-                                                            if(!discret)
-                                                                Toast.makeText(thisContext, "Error: please enable WiFi or cell", Toast.LENGTH_SHORT).show();
-                                                            sendServiceProgressBar.setVisibility(View.INVISIBLE);
-                                                        }
-                                                    });
-                                                    startStopWear(true);*/
-                                                }
-
-                                                BDDwearable.clear();
-                                                initialTimestamp = System.currentTimeMillis() / 1000;
-
+                                    // Send data to the service
+                                    Runnable serviceSendCall = new Runnable() {
+                                        public void run() {
+                                            if(serviceUpload("main_sgl") && serviceUpload("main_sp")) {
                                                 // End loading
+                                            }
+                                            else {
                                                 runOnUiThread(new Runnable() {
                                                     @Override
                                                     public void run() {
+                                                        new AlertDialog.Builder(MainActivity.this)
+                                                                .setTitle("Unable to send data")
+                                                                .setMessage("SWIPE is not able to send your data through WiFi or Cellular network. However, as it is recorded, you can send it later. Do not restart a new session in the meantime.")
+                                                                .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                                                                    public void onClick(DialogInterface dialog, int which) {}
+                                                                })
+                                                                .setIcon(android.R.drawable.ic_dialog_alert)
+                                                                .show();
+                                                    }
+                                                });
+
+                                                /*runOnUiThread(new Runnable() {
+                                                    @Override
+                                                    public void run() {
                                                         if(!discret)
-                                                            Toast.makeText(thisContext, "That's all folks!", Toast.LENGTH_SHORT).show();
-                                                        buttonStart.setVisibility(View.VISIBLE);
-                                                        liveMode.setVisibility(View.VISIBLE);
+                                                            Toast.makeText(thisContext, "Error: please enable WiFi or cell", Toast.LENGTH_SHORT).show();
                                                         sendServiceProgressBar.setVisibility(View.INVISIBLE);
                                                     }
                                                 });
+                                                startStopWear(true);*/
                                             }
-                                        };
-                                        Thread serviceSend = new Thread(serviceSendCall);
-                                        serviceSend.start();
-                                    }
-                                    else {
-                                        // End loading
-                                        runOnUiThread(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                if(!discret)
-                                                    Toast.makeText(thisContext, "That's all folks!", Toast.LENGTH_SHORT).show();
-                                                buttonStart.setVisibility(View.VISIBLE);
-                                                liveMode.setVisibility(View.VISIBLE);
-                                                sendServiceProgressBar.setVisibility(View.INVISIBLE);
-                                            }
-                                        });
-                                    }
+
+                                            BDDwearable.clear();
+                                            initialTimestamp = System.currentTimeMillis() / 1000;
+
+                                            // End loading
+                                            runOnUiThread(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    if(!discret)
+                                                        Toast.makeText(thisContext, "That's all folks!", Toast.LENGTH_SHORT).show();
+                                                    buttonStart.setVisibility(View.VISIBLE);
+                                                    sendServiceProgressBar.setVisibility(View.INVISIBLE);
+                                                }
+                                            });
+                                        }
+                                    };
+                                    Thread serviceSend = new Thread(serviceSendCall);
+                                    serviceSend.start();
                                 }
                             //}
                         }
@@ -437,32 +451,13 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
         } catch (Exception e) {}
     }
 
-    protected void serviceLiveUpload(String data) {
-        final String tmp_data = data;
-        Runnable serviceLiveUploadCall = new Runnable() {
-            public void run() {
-                HttpClient client=new DefaultHttpClient();
-                HttpPost getMethod=new HttpPost(liveServiceUrl);
-                ArrayList<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>();
-                nameValuePairs.add(new BasicNameValuePair("data", tmp_data));
-                try {
-                    getMethod.setEntity(new UrlEncodedFormEntity(nameValuePairs, HTTP.UTF_8));
-                    client.execute(getMethod);
-                }
-                catch (Exception e) {}
-            }
-        };
-        Thread serviceLiveUpload = new Thread(serviceLiveUploadCall);
-        serviceLiveUpload.start();
-    }
-
     // Thanks to the stackoverflow community
     protected boolean serviceUpload(String fileName) {
         boolean isOK = true;
         HttpURLConnection connection = null;
         DataOutputStream outputStream = null;
         DataInputStream inputStream = null;
-        String urlServer = normalServiceUrl;
+        String urlServer = settings.getStr("SERVICE_URL");
         String lineEnd = "\r\n";
         String twoHyphens = "--";
         String boundary =  "*****";
@@ -531,7 +526,7 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
 
     public void Maj() {
         try {
-            File file = new File(getFilesDir() + "/main_sgl"); // new File(Environment.getExternalStorageDirectory(), "TestFolder"); ?
+            File file = new File(getFilesDir() + "/main_sgl"); // new File(Environment.getExternalStorageDirectory(), "TestFolder");
             if(!file.exists()) {
                 file.createNewFile();
                 file.setReadable(true, false);
@@ -603,16 +598,12 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
             if (runningServiceInfo.service.getClassName().equals(SensorService.class.getName())){
                 return 1;
             }
-            if (runningServiceInfo.service.getClassName().equals(SensorServiceLive.class.getName())){
-                return 2;
-            }
         }
         return 0;
     }
 
     @Override
     public void onConnected(Bundle bundle) {
-        //Wearable.DataApi.addListener(mGoogleApiClient, this);
         Wearable.MessageApi.addListener(mGoogleApiClient, this);
         resolveNode();
     }
@@ -650,30 +641,30 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
             userInput.setText(currentProfile);
 
             alertDialogBuilder
-                    .setCancelable(false)
-                    .setPositiveButton("OK",
-                            new DialogInterface.OnClickListener() {
-                                public void onClick(DialogInterface dialog,int id) {
-                                    currentProfile = userInput.getText().toString().toUpperCase();
-                                    delFile("config_profile");
-                                    try {
-                                        File file = new File(getFilesDir() + "/config_profile");
-                                        FileWriter fw = new FileWriter(file.getAbsoluteFile(), true);
-                                        BufferedWriter bw = new BufferedWriter(fw);
-                                        bw.write(currentProfile);
-                                        bw.close();
-                                    }
-                                    catch (Exception e) {}
+                .setCancelable(false)
+                .setPositiveButton("OK",
+                    new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog,int id) {
+                            currentProfile = userInput.getText().toString().toUpperCase();
+                            delFile("config_profile");
+                            try {
+                                File file = new File(getFilesDir() + "/config_profile");
+                                FileWriter fw = new FileWriter(file.getAbsoluteFile(), true);
+                                BufferedWriter bw = new BufferedWriter(fw);
+                                bw.write(currentProfile);
+                                bw.close();
+                            }
+                            catch (Exception e) {}
 
-                                    infoProfile.setText("Current profile: " + currentProfile);
-                                }
-                            })
-                    .setNegativeButton("Cancel",
-                            new DialogInterface.OnClickListener() {
-                                public void onClick(DialogInterface dialog, int id) {
-                                    dialog.cancel();
-                                }
-                            });
+                            infoProfile.setText("Current profile: " + currentProfile);
+                        }
+                    })
+                .setNegativeButton("Cancel",
+                    new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int id) {
+                            dialog.cancel();
+                        }
+                    });
 
             AlertDialog alertDialog = alertDialogBuilder.create();
             alertDialog.show();
@@ -694,14 +685,14 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                new AlertDialog.Builder(MainActivity.this)
-                                        .setTitle("Unable to send data")
-                                        .setMessage("SWIPE is not able to send your data through WiFi or Cellular network. However, as it is recorded, you can send it later. Do not restart a new session in the meantime.")
-                                        .setPositiveButton("OK", new DialogInterface.OnClickListener() {
-                                            public void onClick(DialogInterface dialog, int which) {}
-                                        })
-                                        .setIcon(android.R.drawable.ic_dialog_alert)
-                                        .show();
+                            new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("Unable to send data")
+                                .setMessage("SWIPE is not able to send your data through WiFi or Cellular network. However, as it is recorded, you can send it later. Do not restart a new session in the meantime.")
+                                .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                                    public void onClick(DialogInterface dialog, int which) {}
+                                })
+                                .setIcon(android.R.drawable.ic_dialog_alert)
+                                .show();
                             }
                         });
                     }
@@ -711,11 +702,10 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
             serviceSend.start();
         }
         else if (id == R.id.action_reuploadMail) {
-            Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE, Uri.fromParts(
-                    "mailto", "m@sfaye.com", null));
+            Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE, Uri.fromParts("mailto", "m@sfaye.com", null));
             intent.setType("text/plain");
             intent.putExtra(Intent.EXTRA_EMAIL, new String[] { "m@sfaye.com" });
-            intent.putExtra(Intent.EXTRA_SUBJECT, "iNSIDE datas - VehicularLab");
+            intent.putExtra(Intent.EXTRA_SUBJECT, "SWIPE data");
             intent.putExtra(Intent.EXTRA_TEXT, "FYI");
             ArrayList<Uri> uris = new ArrayList<Uri>();
             uris.add(Uri.parse("file://" + getFilesDir() + "/main_sgl"));
@@ -742,11 +732,7 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                     List<String> tmp = new ArrayList<String>();
                     int tmpCurTime = Integer.parseInt(splitBis[1]);
 
-                    if(isLiveMode) {
-                        lastSensorData = splitBis[0].replace(",", ";");
-                        serviceLiveUpload(String.valueOf(tmpCurTime) + ":" + lastSensorData);
-                    }
-                    else if(tmpCurTime > initialTimestamp) {
+                    if(tmpCurTime > initialTimestamp) {
                         lastSensorData = splitBis[0].replace(",", ";");
                         if(tmpCurTime > minCurTime) {
                             String[] splitBisBis = lastSensorData.split(";");
@@ -772,63 +758,7 @@ public class MainActivity extends Activity implements MessageApi.MessageListener
                 }
             });
 
-            if(!isLiveMode)
-                Maj();
+            Maj();
         }
     }
-
-    // DataApi
-    /*@Override
-    public void onDataChanged(DataEventBuffer dataEvents) {
-        lastMessageFromWear = (System.currentTimeMillis() / 1000);
-        for (DataEvent event: dataEvents) {
-            if (event.getType() == DataEvent.TYPE_CHANGED) {
-                if (event.getDataItem().getUri().toString().contains(isLiveMode ? "/synclive" : "/sync")) {
-                    DataMapItem dataItem = DataMapItem.fromDataItem(event.getDataItem());
-                    String data = dataItem.getDataMap().getString("data");
-
-                    int minCurTime = 0;
-                    try {
-                        String[] split = data.split(";");
-                        for (int i = 0; i < split.length; i++) {
-                            String[] splitBis = split[i].split(":");
-
-                            // Update
-                            List<String> tmp = new ArrayList<String>();
-                            int tmpCurTime = Integer.parseInt(splitBis[1]);
-
-                            if(isLiveMode) {
-                                lastSensorData = splitBis[0].replace(",", ";");
-                                serviceLiveUpload(String.valueOf(tmpCurTime) + ":" + lastSensorData);
-                            }
-                            else if(tmpCurTime > initialTimestamp) {
-                                lastSensorData = splitBis[0].replace(",", ";");
-                                if(tmpCurTime > minCurTime) {
-                                    String[] splitBisBis = lastSensorData.split(";");
-                                    if(splitBisBis[0].length() > 0) {
-                                        lastBattery = Integer.parseInt(splitBisBis[0]);
-                                    }
-                                }
-
-                                tmp.add(lastSensorData);
-                                BDDwearable.put(tmpCurTime, tmp);
-                            }
-                        }
-                    }
-                    catch (Exception e) {}
-                }
-            }
-        }
-
-        curTime = System.currentTimeMillis() / 1000;
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                info.setText("Last sync. (smartwatch): " + String.valueOf(curTime - initialTimestamp));
-            }
-        });
-
-        if(!isLiveMode)
-            Maj();
-    }*/
 }

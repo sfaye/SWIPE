@@ -61,20 +61,10 @@ import java.io.FileWriter;
 import java.util.Calendar;
 
 /*
-    Get data from the sensors with the normal mode (one day data collection).
+    Get data from the sensors
  */
 public class SensorService extends Service implements SensorEventListener{
-     /*
-        Parameters
-     */
-    private volatile int TIMEOUT_SYNC = 1325; // Sync. with the smartphone (seconds)
-    private volatile int A_INTERVAL = 30; // Accelerometer recording interval (seconds)
-    private volatile int SC_INTERVAL = 60; // Steps recording interval (seconds)
 
-
-    /*
-        ############################################
-    */
     private volatile int HR_DELAY = 10; // Initial delay to get heart rate
     private volatile int HR_INTERVAL; // Heart rate recording interval (seconds) - adaptive
     private volatile int HR_SAMPLE = 0;
@@ -115,6 +105,7 @@ public class SensorService extends Service implements SensorEventListener{
     private volatile boolean recordHR = false;
     public volatile BluetoothAdapter blue;
     private PowerManager.WakeLock wl;
+    private volatile Settings settings;
 
     @Override
     public void onCreate() {
@@ -123,6 +114,7 @@ public class SensorService extends Service implements SensorEventListener{
         DATA = new String("");
         isRunning = false;
         isWaitingForSync = false;
+        settings = new Settings();
 
         mGoogleApiClient = new GoogleApiClient.Builder(this)
             .addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
@@ -157,53 +149,38 @@ public class SensorService extends Service implements SensorEventListener{
         Wearable.NodeApi.getConnectedNodes(mGoogleApiClient).setResultCallback(new ResultCallback<NodeApi.GetConnectedNodesResult>() {
             @Override
             public void onResult(NodeApi.GetConnectedNodesResult nodes) {
-                Node mNode = null;
-                for (Node node : nodes.getNodes()) {
-                    mNode = node;
-                    break;
-                }
-                if (mNode != null) {
-                    Wearable.MessageApi.sendMessage(mGoogleApiClient, mNode.getId(), "/wear-collect", DATA.getBytes()).setResultCallback(
-                            new ResultCallback<MessageApi.SendMessageResult>() {
-                                @Override
-                                public void onResult(MessageApi.SendMessageResult sendMessageResult) {
-                                    if (sendMessageResult.getStatus().isSuccess()) {
-                                        DATA = new String("");
-                                    }
+            Node mNode = null;
+            for (Node node : nodes.getNodes()) {
+                mNode = node;
+                break;
+            }
+            if (mNode != null) {
+                Wearable.MessageApi.sendMessage(mGoogleApiClient, mNode.getId(), "/wear-collect", DATA.getBytes()).setResultCallback(
+                        new ResultCallback<MessageApi.SendMessageResult>() {
+                            @Override
+                            public void onResult(MessageApi.SendMessageResult sendMessageResult) {
+                                if (sendMessageResult.getStatus().isSuccess()) {
+                                    DATA = new String("");
                                 }
-                            });
-                }
-                else { // No node detected: save data in a file
-                    try {
-                        File file = new File(getFilesDir() + "/main_sgl");
-                        if(file.exists()) {
-                            file.delete();
-                        }
-                        file.createNewFile();
-                        file.setReadable(true, false);
-
-                        FileWriter fw = new FileWriter(file.getAbsoluteFile(), true);
-                        BufferedWriter bw = new BufferedWriter(fw);
-                        bw.write(DATA);
-                        bw.close();
+                            }
+                        });
+            }
+            else { // No node detected: save data in a file
+                try {
+                    File file = new File(getFilesDir() + "/main_sgl");
+                    if(file.exists()) {
+                        file.delete();
                     }
-                    catch (Exception e) {}
-                }
+                    file.createNewFile();
+                    file.setReadable(true, false);
 
-                /*if(nodes.getNodes().size() > 0) {
-                    PutDataMapRequest dataMap = PutDataMapRequest.create("/sync");
-                    dataMap.getDataMap().putString("data", DATA);
-                    PutDataRequest request = dataMap.asPutDataRequest();
-                    try {
-                        Wearable.DataApi.putDataItem(mGoogleApiClient, request)
-                                .setResultCallback(new ResultCallback<DataItemResult>() {
-                                    @Override
-                                    public void onResult(DataItemResult dataItemResult) {
-                                        DATA = new String("");
-                                    }
-                                });
-                    } catch (Exception e) {}
-                }*/
+                    FileWriter fw = new FileWriter(file.getAbsoluteFile(), true);
+                    BufferedWriter bw = new BufferedWriter(fw);
+                    bw.write(DATA);
+                    bw.close();
+                }
+                catch (Exception e) {}
+            }
             }
         });
     }
@@ -242,9 +219,9 @@ public class SensorService extends Service implements SensorEventListener{
                     DATA = DATA + data;
                     file.delete();
 
-                    // Sync is there is enough data
+                    // Sync if there is enough data
                     if(data.length() >= 100) {
-                        lastSync = (int) (System.currentTimeMillis() / 1000) - TIMEOUT_SYNC + 10;
+                        lastSync = (int) (System.currentTimeMillis() / 1000) - settings.getInt("TIMEOUT_SYNC") + 10;
                     }
                 }
             }
@@ -252,8 +229,8 @@ public class SensorService extends Service implements SensorEventListener{
 
             // ***
             mSensorManager.registerListener(this, this.mHeartRateSensor, SensorManager.SENSOR_DELAY_NORMAL);
-            mSensorManager.registerListener(this, this.mStepCounterSensor, 1000000); //SensorManager.SENSOR_DELAY_NORMAL);
-            mSensorManager.registerListener(this, this.mLinearAccelerationSensor, 1000000); //SensorManager.SENSOR_DELAY_NORMAL);
+            mSensorManager.registerListener(this, this.mStepCounterSensor, SensorManager.SENSOR_DELAY_NORMAL);
+            mSensorManager.registerListener(this, this.mLinearAccelerationSensor, SensorManager.SENSOR_DELAY_NORMAL);
 
             Notification notification = new Notification(R.drawable.stat_notify_chat, "-", System.currentTimeMillis());
             Intent notificationIntent = new Intent(this, MainActivity.class);
@@ -289,14 +266,13 @@ public class SensorService extends Service implements SensorEventListener{
             // Adaptive frequency
             if(globalTime - lastStepTime <= 10) { // Step detected recently
                 HR_SAMPLE = 20;
-                HR_INTERVAL = Math.max(150 - HR_DELAY, 0); // Heart rate
-                //A_INTERVAL = 15; // Accelerometer
-                A_INTERVAL = 30; // Accelerometer
+                HR_INTERVAL = Math.max(settings.getInt("MIN_HR_INTERVAL") - HR_DELAY, 0); // Heart rate
+                //settings.setInt("A_INTERVAL", 15); // Accelerometer
             }
-            else { // Repos
+            else { // Still
                 HR_SAMPLE = 10;
-                HR_INTERVAL = 300 - HR_DELAY; // Heart rate
-                A_INTERVAL = 30; // Accelerometer
+                HR_INTERVAL = settings.getInt("MAX_HR_INTERVAL") - HR_DELAY; // Heart rate
+                //settings.setInt("A_INTERVAL", 30); // Accelerometer
             }
 
             // HR sensor - activate
@@ -318,7 +294,7 @@ public class SensorService extends Service implements SensorEventListener{
             }
 
             // Battery
-            if(globalTime >= lastBatteryUpdate + 60) {
+            if(globalTime >= lastBatteryUpdate + settings.getInt("B_INTERVAL")) {
                 lastBatteryUpdate = globalTime;
                 registerReceiver(mBatInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             }
@@ -328,14 +304,14 @@ public class SensorService extends Service implements SensorEventListener{
                 try {
                     // Acceleration
                     boolean recordAcceleration = false;
-                    if(lastAccel > -1 && globalTime - lastAccelTime >= A_INTERVAL)  {
+                    if(lastAccel > -1 && globalTime - lastAccelTime >= settings.getInt("A_INTERVAL"))  {
                         lastAccelTime = globalTime;
                         recordAcceleration = true;
                     }
 
                     // Steps
                     boolean recordStepCounter = false;
-                    if(stepCounterDiff > 0 && globalTime - firstStepCounter >= SC_INTERVAL) {
+                    if(stepCounterDiff > 0 && globalTime - firstStepCounter >= settings.getInt("SC_INTERVAL")) {
                         firstStepCounter = -1;
                         recordStepCounter = true;
                     }
@@ -367,10 +343,10 @@ public class SensorService extends Service implements SensorEventListener{
             }
 
             // Sync
-            if (globalTime - lastSync >= TIMEOUT_SYNC && !doSynchro && (accessBlue || itsTheEnd)) {
+            if (globalTime - lastSync >= settings.getInt("TIMEOUT_SYNC") && !doSynchro && (accessBlue || itsTheEnd)) {
                 doSynchro = true;
-                if(TIMEOUT_SYNC > 60 || (TIMEOUT_SYNC <= 60 && !itsTheEnd)) {
-                    if(TIMEOUT_SYNC <= 60 && !itsTheEnd) {
+                if(settings.getInt("TIMEOUT_SYNC") > 60 || (settings.getInt("TIMEOUT_SYNC") <= 60 && !itsTheEnd)) {
+                    if(settings.getInt("TIMEOUT_SYNC") <= 60 && !itsTheEnd) {
                         itsTheEnd = true;
                     }
                     new Thread(new Runnable() {
@@ -398,7 +374,7 @@ public class SensorService extends Service implements SensorEventListener{
                 }).start();
             }
 
-            if (globalTime - lastSync >= TIMEOUT_SYNC + 30 && doSynchro && !isWaitingForSync) {
+            if (globalTime - lastSync >= settings.getInt("TIMEOUT_SYNC") + 30 && doSynchro && !isWaitingForSync) {
                 lastSync = lastSync + 30;
                 doSynchro = false;
                 itsTheEnd = false;
@@ -517,8 +493,8 @@ public class SensorService extends Service implements SensorEventListener{
             if(BatteryLevel <= 0)
                 BatteryLevel = 1;
             int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-            if((BatteryLevel > 0 && BatteryLevel < 5) || (hour >= 0 && hour <= 5)) {
-                TIMEOUT_SYNC = 60;
+            if((BatteryLevel > 0 && BatteryLevel < settings.getInt("MIN_BATTERY")) || (settings.getInt("NIGHT_STOP") == 1 && (hour >= 0 && hour <= 5))) {
+                settings.setInt("TIMEOUT_SYNC", 60);
             }
             unregisterReceiver(mBatInfoReceiver);
         }
