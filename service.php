@@ -39,7 +39,7 @@ $i = 100;
 $tab = array();
 while (($file = readdir($dossier)) !== false) {
 	if(preg_match("#main#i", $file)) {
-		$tab[preg_replace("#^[^_]+_main_[a-z0-9]+_([0-9]+)$#i", "$1", $file).$i] = $file.":".human_filesize(filesize("./files/".$file));
+		$tab[preg_replace("#^[^_]+_main_[a-z0-9]+_([0-9]+)$#i", "$1", $file).$i] = $file.":".human_filesize(filesize("./files/".$file)).":".filemtime("./files/".$file);
 		$i++;
 	}
 }

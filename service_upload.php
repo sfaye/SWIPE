@@ -28,11 +28,36 @@
  * ------------------------------------------------------------------------------
  */
  
+$isitok = false;
+
 if(isset($_FILES)) {
-	if(move_uploaded_file($_FILES["uploadedfile"]["tmp_name"], "./files/".$_FILES["uploadedfile"]["name"]."_".time())) {
-		echo "1";
-		exit;    	
+	$username = $_FILES["uploadedfile"]["name"];
+	
+	$max_timestamp = 0;
+	$dir = opendir("./files");
+	while (($file = readdir($dir)) !== false) {
+		if(preg_match("#".$username."#i", $file)) {
+			$timestamp = intval(preg_replace("#^[^_]+_main_[a-z0-9]+_([0-9]+)$#i", "$1", $file));
+			if($max_timestamp < $timestamp) 
+				$max_timestamp = $timestamp;
+		}
+	}
+	closedir($dossier);
+	
+	// Upload data
+	$new_timestamp = time();
+	$new_file = "./files/".$username."_".$new_timestamp;
+	if(move_uploaded_file($_FILES["uploadedfile"]["tmp_name"], $new_file)) {
+		$isitok = true;
+	}
+	
+	if($max_timestamp > 0) {
+		$cur_file = "./files/".$username."_".$max_timestamp;
+		if($new_timestamp - filemtime($cur_file) < 8*60*60) { // We don't need to create a new file if the previous data timestamp < xh
+			file_put_contents($cur_file, file_get_contents($new_file), FILE_APPEND);
+			@unlink($new_file);
+		}
 	}
 }
-echo "2";
+echo ($isitok ? "1" : "2");
 ?>
